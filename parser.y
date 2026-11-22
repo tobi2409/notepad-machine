@@ -1,24 +1,28 @@
 %{
     #include <stdio.h>
+    #include <stdlib.h>
     #include <string.h>
 
     struct Instruction;
+    struct AddressComponent;
+    struct Address;
 
     void run();
-    void runInstructions(struct Instruction *instructionList, int instructionCount);
+    void runInstructions();
+    int resolveAddressComponent(struct AddressComponent component);
+    void resolveAddress(struct Address address, int *row, int *column);
 
     int yylex();
     void yyerror(const char* s);
 
     #define MAX_INSTRUCTIONS 20
-    #define MAX_MODULES 20
-    #define MAX_MODULE_NAME_LENGTH 31
+    #define MAX_LABELS 20
+    #define MAX_LABEL_NAME_LENGTH 31
 
     struct AddressComponent {
         int isDynamic;
         int value;
-        int referenceRow;
-        int referenceColumn;
+        struct Address *reference;
     };
 
     struct Address {
@@ -38,14 +42,16 @@
     enum CompareValueType {
         COMPAREVALUETYPE_DIGIT,
         COMPAREVALUETYPE_CHARACTER,
-        COMPAREVALUETYPE_ADDRESS
+        COMPAREVALUETYPE_ADDRESS 
     };
 
     enum ComparisonCondition {
         COMPARISON_EQUAL,
         COMPARISON_NOTEQUAL,
         COMPARISON_GREATER,
-        COMPARISON_LESS
+        COMPARISON_LESS,
+        COMPARISON_GREATEROREQUAL,
+        COMPARISON_LESSOREQUAL
     };
 
     struct CompareOperand {
@@ -77,7 +83,7 @@
             } assignAddressInstruction;
 
             struct {
-                char moduleName[MAX_MODULE_NAME_LENGTH + 1];
+                char labelName[MAX_LABEL_NAME_LENGTH + 1];
             } gotoInstruction;
 
             struct {
@@ -87,23 +93,21 @@
 
             struct {
                 enum ComparisonCondition condition;
-                char moduleName[MAX_MODULE_NAME_LENGTH + 1];
+                char labelName[MAX_LABEL_NAME_LENGTH + 1];
             } conditionalGotoInstruction;
         } data;
     };
 
-    struct Module {
-        char name[MAX_MODULE_NAME_LENGTH + 1];
-        struct Instruction instructions[MAX_INSTRUCTIONS];
-        int instructionsSize;
+    struct Label {
+        char name[MAX_LABEL_NAME_LENGTH + 1];
+        int instructionPointer;
     };
 
     struct Instruction instructions[MAX_INSTRUCTIONS] = {}; // Tätigkeitenblatt mit 20 Zeilen
     int instructionsSize = 0;
-    struct Module modules[MAX_MODULES] = {};
-    int modulesSize = 0;
-    struct Instruction *currentInstructions = instructions;
-    int *currentInstructionsSize = &instructionsSize;
+    struct Label labels[MAX_LABELS] = {};
+    int labelsSize = 0;
+    int instructionPointer = 0;
 
     enum ValueType {
         VALUETYPE_DIGIT,
@@ -122,12 +126,14 @@
     struct MemoryCell memory[5][5] = {}; // kariertes Papier 5x5 Zellen
 %}
 
+/* Flex bindet parser.tab.h ein; dort muss YYSTYPE die Adresstypen vollständig kennen, damit yylval kompiliert. */
 %code requires {
+    struct Address;
+
     struct AddressComponent {
         int isDynamic;
         int value;
-        int referenceRow;
-        int referenceColumn;
+        struct Address *reference;
     };
 
     struct Address {
@@ -138,32 +144,31 @@
 
 %union {
     int digit;
+    int coordinateNumber;
     char character;
-    char string[32];
+    char labelName[32]; // Labelnamen sind kein Datentyp der Sprache, sondern Parser-Metadaten
 
     struct Address address;
     struct AddressComponent addressComponent;
 }
 
 %token<digit> DIGIT
+%token<coordinateNumber> COORDINATE_NUMBER
 %token<character> CHARACTER
-%token<string> STRING
+%token<labelName> LABEL_NAME
 %token ASSIGN
 %token RUN
 %token PRINT_MEMORY
-%token MODULE
+%token LABEL
 %token END
 %token GOTO
 %token COMPARE
 %token COMMA
-%token EQUAL
-%token NOTEQUAL
-%token GREATER
-%token LESS
-
+%token EQUAL NOT_EQUAL GREATER LESS GREATER_OR_EQUAL LESS_OR_EQUAL
 %token LBRACKET RBRACKET
 %type<address> address
 %type<addressComponent> addressComponent
+%type<coordinateNumber> coordinateNumber
 
 %%
 
@@ -176,7 +181,7 @@ instruction:
     | goto
     | compare
     | conditionalGoto
-    | module
+    | label
     | PRINT_MEMORY {
         for (int i = 0 ; i < 5 ; i++) {
             for (int j = 0 ; j < 5 ; j++) {
@@ -193,95 +198,95 @@ instruction:
     | RUN {
         run();
     };
-module:
-    MODULE STRING {
-        struct Module *module = &modules[modulesSize++];
-        strcpy(module->name, $2);
-        currentInstructions = module->instructions;
-        currentInstructionsSize = &module->instructionsSize;
-    } moduleInstructions END {
-        currentInstructions = instructions;
-        currentInstructionsSize = &instructionsSize;
+label:
+    LABEL LABEL_NAME {
+        struct Label *label = &labels[labelsSize++];
+        strcpy(label->name, $2);
+        label->instructionPointer = instructionsSize;
     };
-moduleInstructions:
-    moduleInstruction
-    | moduleInstruction moduleInstructions;
-moduleInstruction:
-    assign
-    | goto
-    | compare
-    | conditionalGoto;
 goto:
-    GOTO STRING {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_GOTO;
-        strcpy(currentInstructions[nextIndex].data.gotoInstruction.moduleName, $2);
+    GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_GOTO;
+        strcpy(instructions[nextIndex].data.gotoInstruction.labelName, $2);
     };
 compare:
     COMPARE address COMMA DIGIT {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_COMPARE;
-        currentInstructions[nextIndex].data.compareInstruction.address = $2;
-        currentInstructions[nextIndex].data.compareInstruction.operand.type = COMPAREVALUETYPE_DIGIT;
-        currentInstructions[nextIndex].data.compareInstruction.operand.value.digit = $4;
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_COMPARE;
+        instructions[nextIndex].data.compareInstruction.address = $2;
+        instructions[nextIndex].data.compareInstruction.operand.type = COMPAREVALUETYPE_DIGIT;
+        instructions[nextIndex].data.compareInstruction.operand.value.digit = $4;
     }
     | COMPARE address COMMA CHARACTER {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_COMPARE;
-        currentInstructions[nextIndex].data.compareInstruction.address = $2;
-        currentInstructions[nextIndex].data.compareInstruction.operand.type = COMPAREVALUETYPE_CHARACTER;
-        currentInstructions[nextIndex].data.compareInstruction.operand.value.character = $4;
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_COMPARE;
+        instructions[nextIndex].data.compareInstruction.address = $2;
+        instructions[nextIndex].data.compareInstruction.operand.type = COMPAREVALUETYPE_CHARACTER;
+        instructions[nextIndex].data.compareInstruction.operand.value.character = $4;
     }
     | COMPARE address COMMA address {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_COMPARE;
-        currentInstructions[nextIndex].data.compareInstruction.address = $2;
-        currentInstructions[nextIndex].data.compareInstruction.operand.type = COMPAREVALUETYPE_ADDRESS;
-        currentInstructions[nextIndex].data.compareInstruction.operand.value.address = $4;
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_COMPARE;
+        instructions[nextIndex].data.compareInstruction.address = $2;
+        instructions[nextIndex].data.compareInstruction.operand.type = COMPAREVALUETYPE_ADDRESS;
+        instructions[nextIndex].data.compareInstruction.operand.value.address = $4;
     };
 conditionalGoto:
-    EQUAL GOTO STRING {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
-        currentInstructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_EQUAL;
-        strcpy(currentInstructions[nextIndex].data.conditionalGotoInstruction.moduleName, $3);
+    EQUAL GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
+        instructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_EQUAL;
+        strcpy(instructions[nextIndex].data.conditionalGotoInstruction.labelName, $3);
     }
-    | NOTEQUAL GOTO STRING {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
-        currentInstructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_NOTEQUAL;
-        strcpy(currentInstructions[nextIndex].data.conditionalGotoInstruction.moduleName, $3);
+    | NOT_EQUAL GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
+        instructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_NOTEQUAL;
+        strcpy(instructions[nextIndex].data.conditionalGotoInstruction.labelName, $3);
     }
-    | GREATER GOTO STRING {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
-        currentInstructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_GREATER;
-        strcpy(currentInstructions[nextIndex].data.conditionalGotoInstruction.moduleName, $3);
+    | GREATER GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
+        instructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_GREATER;
+        strcpy(instructions[nextIndex].data.conditionalGotoInstruction.labelName, $3);
     }
-    | LESS GOTO STRING {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
-        currentInstructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_LESS;
-        strcpy(currentInstructions[nextIndex].data.conditionalGotoInstruction.moduleName, $3);
+    | LESS GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
+        instructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_LESS;
+        strcpy(instructions[nextIndex].data.conditionalGotoInstruction.labelName, $3);
+    }
+    | GREATER_OR_EQUAL GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
+        instructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_GREATEROREQUAL;
+        strcpy(instructions[nextIndex].data.conditionalGotoInstruction.labelName, $3);
+    }
+    | LESS_OR_EQUAL GOTO LABEL_NAME {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_CONDITIONAL_GOTO;
+        instructions[nextIndex].data.conditionalGotoInstruction.condition = COMPARISON_LESSOREQUAL;
+        strcpy(instructions[nextIndex].data.conditionalGotoInstruction.labelName, $3);
     };
 assign:
     address ASSIGN DIGIT {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_ASSIGNDIGIT;
-        currentInstructions[nextIndex].data.assignDigitInstruction.address = $1;
-        currentInstructions[nextIndex].data.assignDigitInstruction.digit = $3;
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_ASSIGNDIGIT;
+        instructions[nextIndex].data.assignDigitInstruction.address = $1;
+        instructions[nextIndex].data.assignDigitInstruction.digit = $3;
     }
     | address ASSIGN CHARACTER {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_ASSIGNCHARACTER;
-        currentInstructions[nextIndex].data.assignCharacterInstruction.address = $1;
-        currentInstructions[nextIndex].data.assignCharacterInstruction.character = $3;
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_ASSIGNCHARACTER;
+        instructions[nextIndex].data.assignCharacterInstruction.address = $1;
+        instructions[nextIndex].data.assignCharacterInstruction.character = $3;
     }
     | address ASSIGN address {
-        int nextIndex = (*currentInstructionsSize)++;
-        currentInstructions[nextIndex].instructionType = INSTRUCTIONTYPE_ASSIGNADDRESS;
-        currentInstructions[nextIndex].data.assignAddressInstruction.source = $3;
-        currentInstructions[nextIndex].data.assignAddressInstruction.destination = $1;
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_ASSIGNADDRESS;
+        instructions[nextIndex].data.assignAddressInstruction.source = $3;
+        instructions[nextIndex].data.assignAddressInstruction.destination = $1;
     };
 
 address:
@@ -290,23 +295,31 @@ address:
         $$.column = $4;
     };
 addressComponent:
-    DIGIT {
+    coordinateNumber {
         $$.isDynamic = 0;
         $$.value = $1;
-        $$.referenceRow = 0;
-        $$.referenceColumn = 0;
+        $$.reference = NULL;
     }
-    | LBRACKET DIGIT COMMA DIGIT RBRACKET {
+    | address {
         $$.isDynamic = 1;
         $$.value = 0;
-        $$.referenceRow = $2;
-        $$.referenceColumn = $4;
+        $$.reference = malloc(sizeof(struct Address));
+        *$$.reference = $1;
     };
+coordinateNumber:
+    DIGIT {
+        $$ = $1;
+    }
+    | COORDINATE_NUMBER {
+        $$ = $1;
+    }
+    ;
 
 %%
 
 void run() {
-    runInstructions(instructions, instructionsSize);
+    instructionPointer = 0;
+    runInstructions();
 }
 
 int resolveAddressComponent(struct AddressComponent component) {
@@ -314,7 +327,10 @@ int resolveAddressComponent(struct AddressComponent component) {
         return component.value;
     }
 
-    struct MemoryCell cell = memory[component.referenceRow][component.referenceColumn];
+    int row;
+    int column;
+    resolveAddress(*component.reference, &row, &column);
+    struct MemoryCell cell = memory[row][column];
     return cell.valueType == VALUETYPE_DIGIT ? cell.value.digit : 0;
 }
 
@@ -323,11 +339,21 @@ void resolveAddress(struct Address address, int *row, int *column) {
     *column = resolveAddressComponent(address.column);
 }
 
-void runInstructions(struct Instruction instructionList[], int instructionCount) {
+int findLabel(const char *name) {
+    for (int i = 0; i < labelsSize; i++) {
+        if (strcmp(labels[i].name, name) == 0) {
+            return labels[i].instructionPointer;
+        }
+    }
+
+    return instructionsSize;
+}
+
+void runInstructions() {
     enum ComparisonCondition lastComparison = COMPARISON_NOTEQUAL;
 
-    for (int i = 0 ; i < instructionCount ; i++) {
-        struct Instruction instruction = instructionList[i];
+    while (instructionPointer < instructionsSize) {
+        struct Instruction instruction = instructions[instructionPointer++];
 
         if (instruction.instructionType == INSTRUCTIONTYPE_ASSIGNDIGIT) {
             int row;
@@ -353,12 +379,7 @@ void runInstructions(struct Instruction instructionList[], int instructionCount)
 
             memory[destinationRow][destinationColumn] = memory[sourceRow][sourceColumn];
         } else if (instruction.instructionType == INSTRUCTIONTYPE_GOTO) {
-            for (int moduleIndex = 0 ; moduleIndex < modulesSize ; moduleIndex++) {
-                if (strcmp(modules[moduleIndex].name, instruction.data.gotoInstruction.moduleName) == 0) {
-                    runInstructions(modules[moduleIndex].instructions, modules[moduleIndex].instructionsSize);
-                    break;
-                }
-            }
+            instructionPointer = findLabel(instruction.data.gotoInstruction.labelName);
         } else if (instruction.instructionType == INSTRUCTIONTYPE_COMPARE) {
             int leftRow;
             int leftColumn;
@@ -394,15 +415,14 @@ void runInstructions(struct Instruction instructionList[], int instructionCount)
         } else if (instruction.instructionType == INSTRUCTIONTYPE_CONDITIONAL_GOTO) {
             enum ComparisonCondition condition = instruction.data.conditionalGotoInstruction.condition;
             int matches = lastComparison == condition
-                || (condition == COMPARISON_NOTEQUAL && lastComparison != COMPARISON_EQUAL);
+                || (condition == COMPARISON_NOTEQUAL && lastComparison != COMPARISON_EQUAL)
+                || (condition == COMPARISON_GREATEROREQUAL
+                    && (lastComparison == COMPARISON_GREATER || lastComparison == COMPARISON_EQUAL))
+                || (condition == COMPARISON_LESSOREQUAL
+                    && (lastComparison == COMPARISON_LESS || lastComparison == COMPARISON_EQUAL));
 
             if (matches) {
-                for (int moduleIndex = 0 ; moduleIndex < modulesSize ; moduleIndex++) {
-                    if (strcmp(modules[moduleIndex].name, instruction.data.conditionalGotoInstruction.moduleName) == 0) {
-                        runInstructions(modules[moduleIndex].instructions, modules[moduleIndex].instructionsSize);
-                        break;
-                    }
-                }
+                instructionPointer = findLabel(instruction.data.conditionalGotoInstruction.labelName);
             }
         }
     }

@@ -4,16 +4,21 @@
     #include "parser.tab.h"
 %}
 
-%x MODULE_NAME
+%x LABEL_STATE
 
 %%
 
 [ \t\r\n]+ {
 }
 
-[0-9]+ {
-    yylval.digit = atoi(yytext);
-    return DIGIT;
+[0-9] {
+     yylval.digit = atoi(yytext);
+     return DIGIT;
+}
+
+[0-9][0-9]+ {
+     yylval.coordinateNumber = atoi(yytext);
+    return COORDINATE_NUMBER;
 }
 
 [a-zA-Z] {
@@ -45,13 +50,13 @@
     return PRINT_MEMORY;
 }
 
-"MODULE" {
-    BEGIN(MODULE_NAME);
-    return MODULE;
+"LABEL" {
+    BEGIN(LABEL_STATE);
+    return LABEL;
 }
 
 "GOTO" {
-    BEGIN(MODULE_NAME);
+    BEGIN(LABEL_STATE);
     return GOTO;
 }
 
@@ -63,30 +68,38 @@
     return COMPARE;
 }
 
-"NOTEQUAL:" {
-    return NOTEQUAL;
+">=" {
+    return GREATER_OR_EQUAL;
 }
 
-"EQUAL:" {
+"<=" {
+    return LESS_OR_EQUAL;
+}
+
+"<>" {
+    return NOT_EQUAL;
+}
+
+"=" {
     return EQUAL;
 }
 
-"GREATER:" {
+">" {
     return GREATER;
 }
 
-"LESS:" {
+"<" {
     return LESS;
 }
 
-<MODULE_NAME>[ \t\r\n]+ {
+<LABEL_STATE>[ \t\r\n]+ {
 }
 
-<MODULE_NAME>[a-zA-Z_][a-zA-Z0-9_]* {
-    strncpy(yylval.string, yytext, sizeof(yylval.string) - 1);
-    yylval.string[sizeof(yylval.string) - 1] = '\0';
+<LABEL_STATE>[a-zA-Z_][a-zA-Z0-9_]* {
+    strncpy(yylval.labelName, yytext, sizeof(yylval.labelName) - 1);
+    yylval.labelName[sizeof(yylval.labelName) - 1] = '\0';
     BEGIN(INITIAL);
-    return STRING;
+    return LABEL_NAME;
 }
 
 %%

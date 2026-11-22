@@ -1,1 +1,1 @@
-rm a.out ; flex lexer.l ; bison -d -t parser.y ;gcc lex.yy.c parser.tab.c
+rm a.out ; flex lexer.l ; bison -d -t parser.y ; gcc lex.yy.c parser.tab.c
