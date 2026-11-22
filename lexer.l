@@ -92,5 +92,5 @@
 %%
 
 int yywrap() {
-    return 0; // Scanner soll fortfahren
+    return 1; // Eingabe ist am Dateiende beendet
 }
