@@ -1,5 +1,5 @@
 [0,0]:=a
-COMPARE [0,0], a
+COMPARE [0,0],a
 = GOTO foo
 <> GOTO bar
 LABEL foo
@@ -9,5 +9,4 @@ LABEL bar
 [0,1]:=c
 GOTO end
 LABEL end
-RUN
-MEM
+MEMORY

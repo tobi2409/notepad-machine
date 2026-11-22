@@ -1,0 +1,13 @@
+h[0,0]:=1
+COMPARE h[0,0],1
+= GOTO foo
+<> GOTO bar
+LABEL foo
+[0,0]:=a
+GOTO end
+LABEL bar
+[0,0]:=b
+GOTO end
+LABEL end
+[0,1]:=h[0,0]
+MEMORY

@@ -2,9 +2,30 @@
     #include <stdlib.h>
     #include <string.h>
     #include "parser.tab.h"
+
+    #define MAX_INCLUDE_DEPTH 20
+    YY_BUFFER_STATE includeStack[MAX_INCLUDE_DEPTH];
+    int includeStackPointer = 0;
+
+    int includeFile(const char *filename) {
+        if (includeStackPointer >= MAX_INCLUDE_DEPTH) {
+            fprintf(stderr, "INCLUDE nesting too deep\n");
+            return 0;
+        }
+
+        FILE *file = fopen(filename, "r");
+        if (!file) {
+            fprintf(stderr, "Cannot include file: %s\n", filename);
+            return 0;
+        }
+
+        includeStack[includeStackPointer++] = YY_CURRENT_BUFFER;
+        yy_switch_to_buffer(yy_create_buffer(file, YY_BUF_SIZE));
+        return 1;
+    }
 %}
 
-%x LABEL_STATE
+%x LABEL_STATE INCLUDE_STATE
 
 %%
 
@@ -19,6 +40,10 @@
 [0-9][0-9]+ {
      yylval.coordinateNumber = atoi(yytext);
     return COORDINATE_NUMBER;
+}
+
+"h" {
+    return HELPER_ADDRESS;
 }
 
 [a-zA-Z] {
@@ -42,12 +67,17 @@
     return COMMA;
 }
 
-"RUN" {
-    return RUN;
+"MEMORY" {
+    return PRINT_MEMORY;
 }
 
-"MEM" {
-    return PRINT_MEMORY;
+"HELPER_MEMORY" {
+    return PRINT_HELPER_MEMORY;
+}
+
+"INCLUDE" {
+    BEGIN(INCLUDE_STATE);
+    return INCLUDE;
 }
 
 "LABEL" {
@@ -58,10 +88,6 @@
 "GOTO" {
     BEGIN(LABEL_STATE);
     return GOTO;
-}
-
-"END" {
-    return END;
 }
 
 "COMPARE" {
@@ -102,8 +128,24 @@
     return LABEL_NAME;
 }
 
+<INCLUDE_STATE>[ \t\r\n]+ {
+}
+
+<INCLUDE_STATE>[^ \t\r\n]+ {
+    strncpy(yylval.fileName, yytext, sizeof(yylval.fileName) - 1);
+    yylval.fileName[sizeof(yylval.fileName) - 1] = '\0';
+    BEGIN(INITIAL);
+    return FILE_NAME;
+}
+
 %%
 
 int yywrap() {
-    return 1; // Eingabe ist am Dateiende beendet
+    if (includeStackPointer == 0) {
+        return 1;
+    }
+
+    yy_delete_buffer(YY_CURRENT_BUFFER);
+    yy_switch_to_buffer(includeStack[--includeStackPointer]);
+    return 0;
 }

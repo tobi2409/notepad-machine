@@ -6,11 +6,14 @@
     struct Instruction;
     struct AddressComponent;
     struct Address;
+    struct MemoryCell;
 
     void run();
     void runInstructions();
+    int includeFile(const char *filename);
     int resolveAddressComponent(struct AddressComponent component);
     void resolveAddress(struct Address address, int *row, int *column);
+    struct MemoryCell *resolveMemoryCell(struct Address address);
 
     int yylex();
     void yyerror(const char* s);
@@ -18,6 +21,12 @@
     #define MAX_INSTRUCTIONS 20
     #define MAX_LABELS 20
     #define MAX_LABEL_NAME_LENGTH 31
+    #define MEMORY_SIZE 20
+
+    enum MemoryArea {
+        MEMORYAREA_NOTE,
+        MEMORYAREA_HELPER
+    };
 
     struct AddressComponent {
         int isDynamic;
@@ -26,6 +35,7 @@
     };
 
     struct Address {
+        enum MemoryArea memoryArea;
         struct AddressComponent row;
         struct AddressComponent column;
     };
@@ -36,7 +46,9 @@
         INSTRUCTIONTYPE_ASSIGNADDRESS,
         INSTRUCTIONTYPE_GOTO,
         INSTRUCTIONTYPE_COMPARE,
-        INSTRUCTIONTYPE_CONDITIONAL_GOTO
+        INSTRUCTIONTYPE_CONDITIONAL_GOTO,
+        INSTRUCTIONTYPE_PRINT_MEMORY,
+        INSTRUCTIONTYPE_PRINT_HELPER_MEMORY
     };
 
     enum CompareValueType {
@@ -123,11 +135,17 @@
         } value;
     };
 
-    struct MemoryCell memory[5][5] = {}; // kariertes Papier 5x5 Zellen
+    struct MemoryCell memory[MEMORY_SIZE][MEMORY_SIZE] = {}; // kariertes Papier für den Notizblock
+    struct MemoryCell helperMemory[MEMORY_SIZE][MEMORY_SIZE] = {}; // kariertes Papier für den Hilfsblock
 %}
 
 /* Flex bindet parser.tab.h ein; dort muss YYSTYPE die Adresstypen vollständig kennen, damit yylval kompiliert. */
 %code requires {
+    enum MemoryArea {
+        MEMORYAREA_NOTE,
+        MEMORYAREA_HELPER
+    };
+
     struct Address;
 
     struct AddressComponent {
@@ -137,6 +155,7 @@
     };
 
     struct Address {
+        enum MemoryArea memoryArea;
         struct AddressComponent row;
         struct AddressComponent column;
     };
@@ -147,6 +166,7 @@
     int coordinateNumber;
     char character;
     char labelName[32]; // Labelnamen sind kein Datentyp der Sprache, sondern Parser-Metadaten
+    char fileName[256];
 
     struct Address address;
     struct AddressComponent addressComponent;
@@ -156,16 +176,18 @@
 %token<coordinateNumber> COORDINATE_NUMBER
 %token<character> CHARACTER
 %token<labelName> LABEL_NAME
+%token<fileName> FILE_NAME
 %token ASSIGN
-%token RUN
 %token PRINT_MEMORY
+%token PRINT_HELPER_MEMORY
 %token LABEL
 %token END
 %token GOTO
+%token INCLUDE
 %token COMPARE
 %token COMMA
 %token EQUAL NOT_EQUAL GREATER LESS GREATER_OR_EQUAL LESS_OR_EQUAL
-%token LBRACKET RBRACKET
+%token LBRACKET RBRACKET HELPER_ADDRESS
 %type<address> address
 %type<addressComponent> addressComponent
 %type<coordinateNumber> coordinateNumber
@@ -182,21 +204,21 @@ instruction:
     | compare
     | conditionalGoto
     | label
+    | include
     | PRINT_MEMORY {
-        for (int i = 0 ; i < 5 ; i++) {
-            for (int j = 0 ; j < 5 ; j++) {
-                if (memory[i][j].valueType == VALUETYPE_DIGIT) {
-                    printf("%d", memory[i][j].value.digit);
-                } else if (memory[i][j].valueType == VALUETYPE_CHARACTER) {
-                    printf("%c", memory[i][j].value.character);
-                }
-            }
-
-            printf("\n");
-        }
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_PRINT_MEMORY;
     }
-    | RUN {
-        run();
+    | PRINT_HELPER_MEMORY {
+        int nextIndex = instructionsSize++;
+        instructions[nextIndex].instructionType = INSTRUCTIONTYPE_PRINT_HELPER_MEMORY;
+    }
+    ;
+include:
+    INCLUDE FILE_NAME {
+        if (!includeFile($2)) {
+            YYERROR;
+        }
     };
 label:
     LABEL LABEL_NAME {
@@ -291,8 +313,14 @@ assign:
 
 address:
     LBRACKET addressComponent COMMA addressComponent RBRACKET {
+        $$.memoryArea = MEMORYAREA_NOTE;
         $$.row = $2;
         $$.column = $4;
+    }
+    | HELPER_ADDRESS LBRACKET addressComponent COMMA addressComponent RBRACKET {
+        $$.memoryArea = MEMORYAREA_HELPER;
+        $$.row = $3;
+        $$.column = $5;
     };
 addressComponent:
     coordinateNumber {
@@ -330,13 +358,25 @@ int resolveAddressComponent(struct AddressComponent component) {
     int row;
     int column;
     resolveAddress(*component.reference, &row, &column);
-    struct MemoryCell cell = memory[row][column];
+    struct MemoryCell cell = component.reference->memoryArea == MEMORYAREA_HELPER
+        ? helperMemory[row][column]
+        : memory[row][column];
     return cell.valueType == VALUETYPE_DIGIT ? cell.value.digit : 0;
 }
 
 void resolveAddress(struct Address address, int *row, int *column) {
     *row = resolveAddressComponent(address.row);
     *column = resolveAddressComponent(address.column);
+}
+
+struct MemoryCell *resolveMemoryCell(struct Address address) {
+    int row;
+    int column;
+    resolveAddress(address, &row, &column);
+
+    return address.memoryArea == MEMORYAREA_HELPER
+        ? &helperMemory[row][column]
+        : &memory[row][column];
 }
 
 int findLabel(const char *name) {
@@ -356,35 +396,20 @@ void runInstructions() {
         struct Instruction instruction = instructions[instructionPointer++];
 
         if (instruction.instructionType == INSTRUCTIONTYPE_ASSIGNDIGIT) {
-            int row;
-            int column;
-            resolveAddress(instruction.data.assignDigitInstruction.address, &row, &column);
-
-            memory[row][column].valueType = VALUETYPE_DIGIT;
-            memory[row][column].value.digit = instruction.data.assignDigitInstruction.digit;
+            struct MemoryCell *cell = resolveMemoryCell(instruction.data.assignDigitInstruction.address);
+            cell->valueType = VALUETYPE_DIGIT;
+            cell->value.digit = instruction.data.assignDigitInstruction.digit;
         } else if (instruction.instructionType == INSTRUCTIONTYPE_ASSIGNCHARACTER) {
-            int row;
-            int column;
-            resolveAddress(instruction.data.assignCharacterInstruction.address, &row, &column);
-
-            memory[row][column].valueType = VALUETYPE_CHARACTER;
-            memory[row][column].value.character = instruction.data.assignCharacterInstruction.character;
+            struct MemoryCell *cell = resolveMemoryCell(instruction.data.assignCharacterInstruction.address);
+            cell->valueType = VALUETYPE_CHARACTER;
+            cell->value.character = instruction.data.assignCharacterInstruction.character;
         } else if (instruction.instructionType == INSTRUCTIONTYPE_ASSIGNADDRESS) {
-            int sourceRow;
-            int sourceColumn;
-            int destinationRow;
-            int destinationColumn;
-            resolveAddress(instruction.data.assignAddressInstruction.source, &sourceRow, &sourceColumn);
-            resolveAddress(instruction.data.assignAddressInstruction.destination, &destinationRow, &destinationColumn);
-
-            memory[destinationRow][destinationColumn] = memory[sourceRow][sourceColumn];
+            *resolveMemoryCell(instruction.data.assignAddressInstruction.destination)
+                = *resolveMemoryCell(instruction.data.assignAddressInstruction.source);
         } else if (instruction.instructionType == INSTRUCTIONTYPE_GOTO) {
             instructionPointer = findLabel(instruction.data.gotoInstruction.labelName);
         } else if (instruction.instructionType == INSTRUCTIONTYPE_COMPARE) {
-            int leftRow;
-            int leftColumn;
-            resolveAddress(instruction.data.compareInstruction.address, &leftRow, &leftColumn);
-            struct MemoryCell left = memory[leftRow][leftColumn];
+            struct MemoryCell left = *resolveMemoryCell(instruction.data.compareInstruction.address);
             struct MemoryCell right = {};
             struct CompareOperand operand = instruction.data.compareInstruction.operand;
 
@@ -395,10 +420,7 @@ void runInstructions() {
                 right.valueType = VALUETYPE_CHARACTER;
                 right.value.character = operand.value.character;
             } else {
-                int rightRow;
-                int rightColumn;
-                resolveAddress(operand.value.address, &rightRow, &rightColumn);
-                right = memory[rightRow][rightColumn];
+                right = *resolveMemoryCell(operand.value.address);
             }
 
             if (left.valueType == right.valueType) {
@@ -424,6 +446,24 @@ void runInstructions() {
             if (matches) {
                 instructionPointer = findLabel(instruction.data.conditionalGotoInstruction.labelName);
             }
+        } else if (instruction.instructionType == INSTRUCTIONTYPE_PRINT_MEMORY
+            || instruction.instructionType == INSTRUCTIONTYPE_PRINT_HELPER_MEMORY) {
+            struct MemoryCell (*selectedMemory)[MEMORY_SIZE] =
+                instruction.instructionType == INSTRUCTIONTYPE_PRINT_HELPER_MEMORY
+                    ? helperMemory
+                    : memory;
+
+            for (int i = 0 ; i < MEMORY_SIZE ; i++) {
+                for (int j = 0 ; j < MEMORY_SIZE ; j++) {
+                    if (selectedMemory[i][j].valueType == VALUETYPE_DIGIT) {
+                        printf("%d", selectedMemory[i][j].value.digit);
+                    } else if (selectedMemory[i][j].valueType == VALUETYPE_CHARACTER) {
+                        printf("%c", selectedMemory[i][j].value.character);
+                    }
+                }
+
+                printf("\n");
+            }
         }
     }
 }
@@ -433,5 +473,11 @@ void yyerror(const char* s) {
 }
 
 int main() {
-    return yyparse();
+    int result = yyparse();
+
+    if (result == 0) {
+        run();
+    }
+
+    return result;
 }
