@@ -18,7 +18,7 @@
     int yylex();
     void yyerror(const char* s);
 
-    #define MAX_INSTRUCTIONS 20
+    #define MAX_INSTRUCTIONS 200
     #define MAX_LABELS 20
     #define MAX_LABEL_NAME_LENGTH 31
     #define MEMORY_SIZE 20

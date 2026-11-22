@@ -1,0 +1,85 @@
+LABEL nextDigit
+COMPARE [h[0,0],h[0,1]],0
+= GOTO one
+COMPARE [h[0,0],h[0,1]],1
+= GOTO two
+COMPARE [h[0,0],h[0,1]],2
+= GOTO three
+COMPARE [h[0,0],h[0,1]],3
+= GOTO four
+COMPARE [h[0,0],h[0,1]],4
+= GOTO five
+COMPARE [h[0,0],h[0,1]],5
+= GOTO six
+COMPARE [h[0,0],h[0,1]],6
+= GOTO seven
+COMPARE [h[0,0],h[0,1]],7
+= GOTO eight
+COMPARE [h[0,0],h[0,1]],8
+= GOTO nine
+COMPARE [h[0,0],h[0,1]],9
+= GOTO zero
+
+LABEL lastDigit
+COMPARE [h[0,0],h[0,1]],9
+= GOTO eight
+COMPARE [h[0,0],h[0,1]],8
+= GOTO seven
+COMPARE [h[0,0],h[0,1]],7
+= GOTO six
+COMPARE [h[0,0],h[0,1]],6
+= GOTO five
+COMPARE [h[0,0],h[0,1]],5
+= GOTO four
+COMPARE [h[0,0],h[0,1]],4
+= GOTO three
+COMPARE [h[0,0],h[0,1]],3
+= GOTO two
+COMPARE [h[0,0],h[0,1]],2
+= GOTO one
+COMPARE [h[0,0],h[0,1]],1
+= GOTO zero
+COMPARE [h[0,0],h[0,1]],0
+= GOTO nine
+
+LABEL one
+[h[0,0],h[0,1]]:=1
+GOTO digitNavigatorEnd
+
+LABEL two
+[h[0,0],h[0,1]]:=2
+GOTO digitNavigatorEnd
+
+LABEL three
+[h[0,0],h[0,1]]:=3
+GOTO digitNavigatorEnd
+
+LABEL four
+[h[0,0],h[0,1]]:=4
+GOTO digitNavigatorEnd
+
+LABEL five
+[h[0,0],h[0,1]]:=5
+GOTO digitNavigatorEnd
+
+LABEL six
+[h[0,0],h[0,1]]:=6
+GOTO digitNavigatorEnd
+
+LABEL seven
+[h[0,0],h[0,1]]:=7
+GOTO digitNavigatorEnd
+
+LABEL eight
+[h[0,0],h[0,1]]:=8
+GOTO digitNavigatorEnd
+
+LABEL nine
+[h[0,0],h[0,1]]:=9
+GOTO digitNavigatorEnd
+
+LABEL zero
+[h[0,0],h[0,1]]:=0
+GOTO digitNavigatorEnd
+
+LABEL digitNavigatorEnd
